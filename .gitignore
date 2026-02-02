@@ -1,0 +1,7 @@
+.vscode
+*.db
+*.pyc
+*.jsonl
+ai_logger
+training_monitor.egg-info
+snapshot_files.txt

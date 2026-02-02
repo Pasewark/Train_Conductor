@@ -1,0 +1,28 @@
+[project]
+name = "training-monitor"
+version = "0.1.0"
+description = "LLM-powered training monitor with real-time analysis and Telegram notifications"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "pyzmq>=25.0",
+    "requests>=2.28",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+training-monitor = "training_monitor.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["training_monitor*"]
