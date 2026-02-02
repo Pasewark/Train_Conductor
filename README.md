@@ -25,7 +25,7 @@ That's the entire integration. A background process collects GPU/CPU stats, pers
 ## Installation
 
 ```bash
-pip install "git+https://github.com/USER/REPO.git@v0.1.0"
+pip install "git+https://github.com/Pasewark/Train_Conductor.git"
 ```
 
 ## What it does
