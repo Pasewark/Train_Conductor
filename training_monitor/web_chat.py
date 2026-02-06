@@ -87,6 +87,8 @@ if not _cl_config.ui.custom_css:
     _cl_config.ui.custom_css = "/public/custom.css"
 if not _cl_config.ui.custom_js:
     _cl_config.ui.custom_js = "/public/debug-panel.js"
+if not _cl_config.ui.default_avatar_file_url:
+    _cl_config.ui.default_avatar_file_url = "/public/avatars/model.png"
 
 
 @_chainlit_app.get("/api/debug")
@@ -648,8 +650,8 @@ def _format_author(role: str, msg_type: str) -> str:
     if role_lower == "user":
         return "User"
     if role_lower == "model":
-        if msg_type == "analysis":
-            return "Model (Analysis)"
+        # Keep a stable, filename-safe assistant author label so Chainlit
+        # avatar lookup resolves to /public/avatars/model.* reliably.
         return "Model"
     if role:
         return role

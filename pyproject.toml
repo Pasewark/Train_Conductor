@@ -34,6 +34,7 @@ include-package-data = true
 training_monitor = [
     "_web_assets/chainlit.md",
     "_web_assets/public/*",
+    "_web_assets/public/avatars/*",
 ]
 
 [tool.setuptools.packages.find]
