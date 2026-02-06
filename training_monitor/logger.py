@@ -88,13 +88,29 @@ def _format_terminal_link(url: str, label: Optional[str] = None, stream: Any = s
 
 
 def _find_chainlit_app_root() -> Optional[Path]:
+    """
+    Locate a Chainlit app root that contains both:
+      - chainlit.md
+      - public/ (custom JS/CSS/favicon assets)
+
+    Supports:
+      - editable/source checkout layout (repo root)
+      - installed-wheel layout (training_monitor/_web_assets)
+    """
     try:
         here = Path(__file__).resolve()
     except Exception:
         return None
+
+    checked: set[str] = set()
     for parent in here.parents:
-        if (parent / "public").is_dir():
-            return parent
+        for candidate in (parent, parent / "_web_assets"):
+            key = str(candidate)
+            if key in checked:
+                continue
+            checked.add(key)
+            if (candidate / "chainlit.md").is_file() and (candidate / "public").is_dir():
+                return candidate
     return None
 
 

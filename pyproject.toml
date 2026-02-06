@@ -27,5 +27,14 @@ training-monitor = "training_monitor.__main__:main"
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+training_monitor = [
+    "_web_assets/chainlit.md",
+    "_web_assets/public/*",
+]
+
 [tool.setuptools.packages.find]
 include = ["training_monitor*"]

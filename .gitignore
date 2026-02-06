@@ -3,8 +3,10 @@
 *.pyc
 *.jsonl
 ai_logger
-training_monitor.egg-info
 snapshot_files.txt
 wandb
 .chainlit
 poetry.lock
+build/
+dist/
+*.egg-info/
