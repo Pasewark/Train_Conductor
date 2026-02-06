@@ -52,12 +52,12 @@ def send_pushover(message: str) -> None:
     resp.raise_for_status()
 
 
-def notify(message: str, level: str = "info") -> None:
+def notify(message: str, level: str = "info", allow_telegram: bool = True) -> None:
     prefix = "🚨 " if level == "alert" else "ℹ️ " if level == "info" else ""
     full_message = prefix + message
 
     try:
-        if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+        if allow_telegram and os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
             send_telegram(full_message)
             return
         if os.getenv("PUSHOVER_USER_KEY") and os.getenv("PUSHOVER_APP_TOKEN"):

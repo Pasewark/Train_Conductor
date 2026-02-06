@@ -17,12 +17,14 @@ def main() -> int:
     parser.add_argument("--zmq-port", type=int, default=5555,
                         help="ZMQ port for receiving metrics")
     parser.add_argument("--root-dir", type=str, default="ai_logger",
-                        help="Root output directory (experiment subdirs created here)")
+                        help="Root output directory (project/experiment subdirs created here)")
+    parser.add_argument("--project", type=str, default="default_project",
+                        help="Project name (used as a subdirectory under root-dir)")
     parser.add_argument("--experiment", type=str, default="",
                         help="Experiment name (optional; if omitted, taken from first metric)")
     parser.add_argument("--db-path", type=str, default="",
-                        help="SQLite database path. If relative, resolved under <root-dir>/<experiment>/ . "
-                             "If empty, defaults to <root-dir>/<experiment>/training_monitor.db")
+                        help="SQLite database path. If relative, resolved under <root-dir>/<project>/<experiment>/ . "
+                             "If empty, defaults to <root-dir>/<project>/<experiment>/training_monitor.db")
 
     parser.add_argument("--analysis-interval-min", type=float, default=5.0,
                         help="Minutes between LLM analyses")
@@ -32,7 +34,7 @@ def main() -> int:
                         help="Seconds between system metric polls")
     parser.add_argument("--max-prompt-len", type=int, default=8000,
                         help="Maximum tokens in LLM prompt")
-    parser.add_argument("--openai-model", type=str, default="gpt-4o",
+    parser.add_argument("--openai-model", type=str, default="gpt-5.2",
                         help="OpenAI model name (or local model if using custom base URL)")
     parser.add_argument("--openai-base-url", type=str, default=None,
                         help="Custom OpenAI-compatible API base URL (for local models)")
@@ -50,7 +52,7 @@ def main() -> int:
     parser.add_argument("--idle-timeout-min", type=float, default=None,
                         help="Stop analyses if no training updates for this many minutes (default: disabled)")
     parser.add_argument("--telegram-chat", action="store_true",
-                        help="Enable interactive Telegram chat (reply to bot messages to ask questions). "
+                        help="Enable Telegram usage (notifications + interactive chat). "
                              "Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars.")
     parser.add_argument("--max-conversation-history-tokens", type=int, default=5000,
                         help="Maximum estimated tokens of conversation history (analyses + chat messages) "
@@ -58,6 +60,13 @@ def main() -> int:
     parser.add_argument("--regenerate-code-analysis", action="store_true",
                         help="Force regeneration of the code summary and metric descriptions, "
                              "ignoring any cached versions from previous runs")
+    parser.add_argument("--code-snapshot-manifest", type=str, default="",
+                        help="Path to a snapshot manifest (same format as snapshot_files.txt)")
+    parser.add_argument("--code-snapshot-paths", type=str, default="",
+                        help="Comma-separated list of file/dir paths to snapshot into run_dir/code")
+    parser.add_argument("--visible-directories", type=str, default="",
+                        help="Comma-separated list of directories to expose via snapshot tools "
+                             "(read-only, live view; not copied)")
 
     args = parser.parse_args()
 
@@ -66,10 +75,22 @@ def main() -> int:
         gpus = [int(x.strip()) for x in args.gpus.split(",") if x.strip()]
 
     exp = args.experiment.strip() or None
+    project = args.project.strip() or None
+
+    visible_dirs = []
+    if args.visible_directories.strip():
+        visible_dirs = [d.strip() for d in args.visible_directories.split(",") if d.strip()]
+
+    snapshot_paths = []
+    if args.code_snapshot_paths.strip():
+        snapshot_paths = [p.strip() for p in args.code_snapshot_paths.split(",") if p.strip()]
+
+    manifest_path = args.code_snapshot_manifest.strip() or None
 
     monitor = TrainingMonitor(
         zmq_port=args.zmq_port,
         root_dir=args.root_dir,
+        project=project,
         experiment=exp,
         db_path=args.db_path,
         analysis_interval_min=args.analysis_interval_min,
@@ -87,6 +108,9 @@ def main() -> int:
         telegram_chat=args.telegram_chat,
         max_conversation_history_tokens=args.max_conversation_history_tokens,
         regenerate_code_analysis=args.regenerate_code_analysis,
+        code_snapshot_paths=snapshot_paths,
+        code_snapshot_manifest=manifest_path,
+        visible_directories=visible_dirs,
     )
 
     def signal_handler(sig, frame):

@@ -16,6 +16,9 @@ dev = [
     "pytest",
     "ruff",
 ]
+web = [
+    "chainlit>=1.0",
+]
 
 [project.scripts]
 training-monitor = "training_monitor.__main__:main"

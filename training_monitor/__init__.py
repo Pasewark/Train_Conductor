@@ -5,16 +5,17 @@ Training Monitor with LLM Analysis
 Hybrid ZMQ + SQLite architecture for monitoring ML training runs
 with periodic LLM-powered analysis and Telegram/Pushover notifications.
 
-All outputs go under: ``<root_dir>/<experiment_name>/``
+All outputs go under: ``<root_dir>/<project>/<experiment_name>/``
 
 Quick start::
 
     import training_monitor as tm
 
     tm.init(
-        experiment_name="grpo_v1",
+        name="grpo_v1",
+        project="default_project",
         config={"lr": 1e-4, "model": "gemma-3-4b"},
-        openai_model="gpt-4o",
+        openai_model="gpt-5.2",
         start_monitor="auto",
     )
 
@@ -26,7 +27,7 @@ Quick start::
 
 The monitor can also be run standalone::
 
-    python -m training_monitor --analysis-interval-min 5 --openai-model gpt-4o
+    python -m training_monitor --analysis-interval-min 5 --openai-model gpt-5.2
 """
 
 from .logger import AILogger, close, get_logger, init, log, reset

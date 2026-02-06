@@ -25,13 +25,17 @@ class TelegramChatHandler:
 
     CHAT_SYSTEM_PROMPT = """\
 You are an expert ML engineer monitoring a live neural network training run. \
-The user is messaging you via Telegram to ask questions about the ongoing training.
+The user is messaging you via Telegram or the web chat to ask questions about the ongoing training.
 
 You have access to the current training context (metrics, system state, recent analyses, config). \
 Use this context to answer the user's questions accurately and concisely.
 
 Keep responses concise — they'll be read on a phone. Use numbers and specifics when relevant.
-If you don't have enough information to answer, say so."""
+If you don't have enough information to answer, say so.
+
+You can write and read long-term memories with memory_write and memory_read.
+Use memory_search to find relevant memories by text query.
+Memory categories: bugs, issues, suggestions, anomalies, messages_from_user, other."""
 
     def __init__(
         self,
@@ -39,11 +43,13 @@ If you don't have enough information to answer, say so."""
         poll_interval_sec: float = 2.0,
         max_chat_history: int = 20,
         tool_manager: Optional[Any] = None,
+        llm_lock: Optional[threading.Lock] = None,
     ):
         self.analyzer = analyzer
         self.poll_interval = poll_interval_sec
         self.max_chat_history = max_chat_history
         self.tool_manager = tool_manager
+        self.llm_lock = llm_lock
 
         self.token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -171,12 +177,6 @@ If you don't have enough information to answer, say so."""
         if self.on_exchange_fn:
             self.on_exchange_fn("user", user_text, "user_message")
 
-        print(f"\n{'='*60}", file=sys.stderr)
-        print(f"[telegram-chat] User message:", file=sys.stderr)
-        print(f"{'='*60}", file=sys.stderr)
-        print(user_text, file=sys.stderr)
-        print(f"{'='*60}\n", file=sys.stderr)
-
         context = self._build_context_prompt()
 
         # The training context goes in the system message to avoid
@@ -193,19 +193,20 @@ If you don't have enough information to answer, say so."""
             messages.append({"role": msg["role"], "content": msg["content"]})
 
         try:
-            reply_text = self.analyzer._call_api_for_messages(
-                messages,
-                tool_manager=self.tool_manager,
-            )
+            if self.llm_lock:
+                with self.llm_lock:
+                    reply_text = self.analyzer._call_api_for_messages(
+                        messages,
+                        tool_manager=self.tool_manager,
+                    )
+            else:
+                reply_text = self.analyzer._call_api_for_messages(
+                    messages,
+                    tool_manager=self.tool_manager,
+                )
         except Exception as e:
             print(f"[telegram-chat] LLM error: {e}", file=sys.stderr)
             reply_text = f"Sorry, I couldn't process that: {e}"
-
-        print(f"\n{'='*60}", file=sys.stderr)
-        print(f"[telegram-chat] LLM response:", file=sys.stderr)
-        print(f"{'='*60}", file=sys.stderr)
-        print(reply_text, file=sys.stderr)
-        print(f"{'='*60}\n", file=sys.stderr)
 
         self._chat_history.append({"role": "assistant", "content": reply_text})
         self._send_reply(reply_text, reply_to_message_id=message_id)

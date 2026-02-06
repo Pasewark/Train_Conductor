@@ -15,6 +15,9 @@ from typing import Any, List, Optional
 # Path helpers
 # =============================================================================
 
+DEFAULT_PROJECT_NAME = "default_project"
+SNAPSHOT_DIFF_FILENAME = "snapshot_diff.patch"
+
 def sanitize_experiment_name(name: str) -> str:
     """Make experiment name safe to use as a directory name."""
     name = name.strip()
@@ -24,6 +27,16 @@ def sanitize_experiment_name(name: str) -> str:
     name = re.sub(r"\s+", "_", name)
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
     return name or "unknown"
+
+
+def sanitize_project_name(name: Optional[str]) -> str:
+    """Make project name safe to use as a directory name."""
+    if name is None:
+        return DEFAULT_PROJECT_NAME
+    name_str = str(name).strip()
+    if not name_str:
+        return DEFAULT_PROJECT_NAME
+    return sanitize_experiment_name(name_str)
 
 
 def ensure_dir(p: Path) -> None:
@@ -45,8 +58,13 @@ def resolve_under(base_dir: Path, path_str: Optional[str]) -> Optional[Path]:
     return base_dir / p
 
 
-def default_experiment_dir(root_dir: Path, experiment_name: str) -> Path:
-    return root_dir / sanitize_experiment_name(experiment_name)
+def default_project_dir(root_dir: Path, project_name: Optional[str]) -> Path:
+    return root_dir / sanitize_project_name(project_name)
+
+
+def default_experiment_dir(root_dir: Path, experiment_name: str, project_name: Optional[str] = None) -> Path:
+    project_dir = default_project_dir(root_dir, project_name)
+    return project_dir / sanitize_experiment_name(experiment_name)
 
 
 def safe_json_dumps(obj: Any) -> str:
@@ -151,6 +169,9 @@ _SNAPSHOT_SKIP_DIRS = frozenset({
     ".mypy_cache",
     ".pytest_cache",
 })
+_SNAPSHOT_SKIP_FILES = frozenset({
+    SNAPSHOT_DIFF_FILENAME,
+})
 
 
 def hash_directory(directory: Path) -> Optional[str]:
@@ -171,6 +192,7 @@ def hash_directory(directory: Path) -> Optional[str]:
     files = sorted(
         f for f in directory.rglob("*")
         if f.is_file()
+        and f.name not in _SNAPSHOT_SKIP_FILES
         and not any(part in _SNAPSHOT_SKIP_DIRS for part in f.relative_to(directory).parts)
     )
 
@@ -187,6 +209,111 @@ def hash_directory(directory: Path) -> Optional[str]:
             continue
 
     return hasher.hexdigest()
+
+
+def _rel_snapshot_path(src: Path, base: Path) -> Path:
+    """Best-effort relative path under *base*; falls back to filename."""
+    try:
+        return src.relative_to(base)
+    except ValueError:
+        return Path(src.name)
+
+
+def _is_under_any(path: Path, excluded: List[Path]) -> bool:
+    for root in excluded:
+        try:
+            path.resolve().relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _collect_snapshot_files(
+    roots: List[Path],
+    base: Path,
+    exclude_dirs: Optional[List[Path]] = None,
+) -> List[tuple[Path, Path]]:
+    all_files: List[tuple[Path, Path]] = []
+    excluded = [p.resolve() for p in (exclude_dirs or [])]
+
+    for root in roots:
+        p = root
+        if not p.is_absolute():
+            p = base / p
+        p = p.resolve()
+
+        if not p.exists():
+            continue
+        if excluded and _is_under_any(p, excluded):
+            continue
+
+        if p.is_file():
+            all_files.append((p, _rel_snapshot_path(p, base)))
+        elif p.is_dir():
+            for child in sorted(p.rglob("*")):
+                if not child.is_file():
+                    continue
+                if excluded and _is_under_any(child, excluded):
+                    continue
+                try:
+                    child_rel_to_dir = child.relative_to(p)
+                except ValueError:
+                    continue
+                if any(part in _SNAPSHOT_SKIP_DIRS for part in child_rel_to_dir.parts):
+                    continue
+                snapshot_rel = _rel_snapshot_path(child, base)
+                all_files.append((child, snapshot_rel))
+
+    return all_files
+
+
+def _copy_snapshot_files(
+    all_files: List[tuple[Path, Path]],
+    dest_dir: Path,
+    max_file_size: int,
+    max_files: int,
+) -> int:
+    ensure_dir(dest_dir)
+
+    copied = 0
+    seen: set = set()
+    skipped_size = 0
+
+    for idx, (source, rel) in enumerate(all_files):
+        if copied >= max_files:
+            remaining = len(all_files) - idx
+            print(
+                f"[AILogger] Code snapshot: hit {max_files}-file limit, "
+                f"~{remaining} entries not copied",
+                file=sys.stderr,
+            )
+            break
+
+        if rel in seen:
+            continue
+        seen.add(rel)
+
+        try:
+            size = source.stat().st_size
+            if size > max_file_size:
+                skipped_size += 1
+                continue
+            dest = dest_dir / rel
+            ensure_dir(dest.parent)
+            shutil.copy2(source, dest)
+            copied += 1
+        except Exception:
+            continue
+
+    if skipped_size:
+        print(
+            f"[AILogger] Code snapshot: skipped {skipped_size} file(s) "
+            f"exceeding {max_file_size / (1024 * 1024):.0f} MB limit",
+            file=sys.stderr,
+        )
+
+    return copied
 
 
 def create_code_snapshot(
@@ -228,89 +355,35 @@ def create_code_snapshot(
     if not raw_entries:
         return 0
 
-    ensure_dir(dest_dir)
+    roots: List[Path] = [Path(entry) for entry in raw_entries]
+    all_files = _collect_snapshot_files(roots, base)
+    if not all_files:
+        return 0
 
-    # ------------------------------------------------------------------
-    # Collect (abs_source, snapshot_relative_path) pairs
-    # ------------------------------------------------------------------
-    all_files: List[tuple] = []  # list of (Path, Path)
+    return _copy_snapshot_files(all_files, dest_dir, max_file_size, max_files)
 
-    def _rel_path(src: Path) -> Path:
-        """Best-effort relative path under *base*; falls back to filename."""
-        try:
-            return src.relative_to(base)
-        except ValueError:
-            return Path(src.name)
 
-    skipped_size = 0
+def create_code_snapshot_from_roots(
+    roots: List[Path],
+    dest_dir: Path,
+    base_dir: Optional[Path] = None,
+    exclude_dirs: Optional[List[Path]] = None,
+    max_file_size: int = 2 * 1024 * 1024,
+    max_files: int = 200,
+) -> int:
+    """
+    Copy code files from a list of root paths into *dest_dir*.
 
-    for raw in raw_entries:
-        p = Path(raw)
-        if not p.is_absolute():
-            p = base / p
-        p = p.resolve()
-
-        if not p.exists():
-            continue
-
-        if p.is_file():
-            all_files.append((p, _rel_path(p)))
-        elif p.is_dir():
-            for child in sorted(p.rglob("*")):
-                if not child.is_file():
-                    continue
-                # Compute path relative to the listed directory
-                try:
-                    child_rel_to_dir = child.relative_to(p)
-                except ValueError:
-                    continue
-                # Skip common non-code directories
-                if any(part in _SNAPSHOT_SKIP_DIRS for part in child_rel_to_dir.parts):
-                    continue
-                # Snapshot path preserves structure relative to base
-                snapshot_rel = _rel_path(child)
-                all_files.append((child, snapshot_rel))
-
-    # ------------------------------------------------------------------
-    # Deduplicate and copy
-    # ------------------------------------------------------------------
-    copied = 0
-    seen: set = set()
-
-    for source, rel in all_files:
-        if copied >= max_files:
-            remaining = len(all_files) - (all_files.index((source, rel)))
-            print(
-                f"[AILogger] Code snapshot: hit {max_files}-file limit, "
-                f"~{remaining} entries not copied",
-                file=sys.stderr,
-            )
-            break
-
-        if rel in seen:
-            continue
-        seen.add(rel)
-
-        try:
-            size = source.stat().st_size
-            if size > max_file_size:
-                skipped_size += 1
-                continue
-            dest = dest_dir / rel
-            ensure_dir(dest.parent)
-            shutil.copy2(source, dest)
-            copied += 1
-        except Exception:
-            continue
-
-    if skipped_size:
-        print(
-            f"[AILogger] Code snapshot: skipped {skipped_size} file(s) "
-            f"exceeding {max_file_size / (1024 * 1024):.0f} MB limit",
-            file=sys.stderr,
-        )
-
-    return copied
+    Uses the same size limits and skip rules as ``create_code_snapshot``.
+    Paths are resolved relative to *base_dir* (defaults to ``Path.cwd()``).
+    Any directories listed in *exclude_dirs* (and their descendants) are skipped.
+    Returns the number of files actually copied.
+    """
+    base = base_dir.resolve() if base_dir else Path.cwd().resolve()
+    all_files = _collect_snapshot_files(roots, base, exclude_dirs=exclude_dirs)
+    if not all_files:
+        return 0
+    return _copy_snapshot_files(all_files, dest_dir, max_file_size, max_files)
 
 
 def read_code_snapshot(
@@ -341,6 +414,7 @@ def read_code_snapshot(
     files: List[Path] = sorted(
         f for f in code_dir.rglob("*")
         if f.is_file()
+        and f.name not in _SNAPSHOT_SKIP_FILES
         and not any(part in _SNAPSHOT_SKIP_DIRS for part in f.relative_to(code_dir).parts)
     )
 
@@ -374,3 +448,31 @@ def read_code_snapshot(
         return None
 
     return "\n".join(sections)
+
+
+def iter_snapshot_files(
+    code_dir: Path,
+    exclude_files: Optional[List[str]] = None,
+) -> List[Path]:
+    """
+    Return sorted relative Paths for files inside *code_dir* that should be
+    considered part of the snapshot (skipping common non-code dirs and
+    generated diff files).
+    """
+    code_dir = Path(code_dir)
+    if not code_dir.is_dir():
+        return []
+
+    exclude = set(exclude_files or [])
+    files: List[Path] = []
+    for fp in code_dir.rglob("*"):
+        if not fp.is_file():
+            continue
+        if fp.name in _SNAPSHOT_SKIP_FILES or fp.name in exclude:
+            continue
+        rel = fp.relative_to(code_dir)
+        if any(part in _SNAPSHOT_SKIP_DIRS for part in rel.parts):
+            continue
+        files.append(rel)
+
+    return sorted(files)
